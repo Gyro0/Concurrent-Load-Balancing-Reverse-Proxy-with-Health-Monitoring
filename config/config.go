@@ -8,7 +8,6 @@ import (
 type Config struct {
     Port                  int      `json:"port"`
     Strategy              string   `json:"Strategy"`
-    HealthCheckFrequency  string   `json:"health_check_frequency"`
     Backends              []string `json:"backends"`
 }
 

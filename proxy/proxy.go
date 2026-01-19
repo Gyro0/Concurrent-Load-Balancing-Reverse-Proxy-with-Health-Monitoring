@@ -1,7 +1,7 @@
 package proxy
 
 import (
-	"lb/loadbalancer"
+	"Concurrent-Load-Balancing-Reverse-Proxy-with-Health-Monitoring/loadbalancer"
     "log"
     "net/http"
     "net/http/httputil"

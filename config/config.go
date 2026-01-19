@@ -9,6 +9,7 @@ type Config struct {
     Port                  int      `json:"port"`
     Strategy              string   `json:"Strategy"`
     Backends              []string `json:"backends"`
+	HealthCheckFreq 	  string   `json:"health_check_frequency"`
 }
 
 func LoadConfig() Config {

@@ -2,8 +2,8 @@ package servers
 
 import (
 	"fmt"
-	"lb/backend"
-	"lb/config"
+	"Concurrent-Load-Balancing-Reverse-Proxy-with-Health-Monitoring/backend"
+	"Concurrent-Load-Balancing-Reverse-Proxy-with-Health-Monitoring/config"
 	"log"
 	"net/http"
 	"net/url"
@@ -16,7 +16,7 @@ import (
 type ServerPool struct {
 	Backends []*backend.Backend `json:"backends"`
 	Current uint64 `json:"current"` // Used for Round-Robin
-	mux sync.RWMutex
+	Mux sync.RWMutex
 }
 
 func NewServerPool() *ServerPool {
@@ -43,8 +43,8 @@ func (sp *ServerPool) LoadBackends(){
 }
 
 func (sp *ServerPool) AddBackend(b *backend.Backend) {
-	sp.mux.Lock()
-	defer sp.mux.Unlock()
+	sp.Mux.Lock()
+	defer sp.Mux.Unlock()
 	sp.Backends=append(sp.Backends,b)
 	log.Printf("Added backend: %s",b.URL)
 }
@@ -79,8 +79,8 @@ func makeServers(sp *ServerPool, wg *sync.WaitGroup,idx int){
 
 
 func (sp *ServerPool) getNextValidPeerRR() *backend.Backend{
-	sp.mux.RLock()
-	defer sp.mux.RUnlock()
+	sp.Mux.RLock()
+	defer sp.Mux.RUnlock()
 	len:=len(sp.Backends)
 	if len==0{
 		return nil
@@ -97,8 +97,8 @@ func (sp *ServerPool) getNextValidPeerRR() *backend.Backend{
 }
 
 func (sp *ServerPool) getNextValidPeerLC() *backend.Backend{
-	sp.mux.RLock()
-	defer sp.mux.RUnlock()
+	sp.Mux.RLock()
+	defer sp.Mux.RUnlock()
 	if len(sp.Backends)==0{
 		return nil
 	}
@@ -121,9 +121,9 @@ func (sp *ServerPool) GetNextValidPeer() *backend.Backend{
 	cfg := config.LoadConfig()
 
 	switch cfg.Strategy{
-		case "round-robin","rr":
+		case "round-robin","rr","Round-Robin","Round-robin","RR":
 			return sp.getNextValidPeerRR()
-		case "least-connections","lc":
+		case "least-connections","lc","Least-Connections","Least-connections","LC":
 			return sp.getNextValidPeerLC()
 		default:
 			log.Printf("unknown strategy '%s', default is rr",cfg.Strategy)
@@ -132,17 +132,21 @@ func (sp *ServerPool) GetNextValidPeer() *backend.Backend{
 }
 
 func (sp *ServerPool) SetBackendStatus(link *url.URL, alive bool){
-	sp.mux.RLock()
-	defer sp.mux.RUnlock()
+	sp.Mux.RLock()
+	defer sp.Mux.RUnlock()
 	for _,b :=range sp.Backends{
 		if b.URL.String()==link.String(){
-			b.SetAlive(alive)
-			if !alive{
-				log.Printf("Backend %s marked as DOWN",link)
+			if alive==b.IsAlive(){
+				break
 			}else{
-				log.Printf("Backend %s marked as UP",link)
+				b.SetAlive(alive)
+				if !alive{
+					log.Printf("Backend %s marked as DOWN",link)
+				}else{
+					log.Printf("Backend %s marked as UP",link)
+				}
+				break
 			}
-			break
 		}
 	}
 }

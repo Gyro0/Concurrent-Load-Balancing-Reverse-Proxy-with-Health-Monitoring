@@ -1,5 +1,6 @@
 {   "port":8080,
-    "Strategy":"rr",
+    "Strategy":"lc",
+    "health_check_frequency": "5s",
     "backends": [
     "http://localhost:8082",
     "http://localhost:8083",

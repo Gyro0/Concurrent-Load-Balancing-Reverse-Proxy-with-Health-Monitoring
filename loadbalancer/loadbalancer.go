@@ -1,6 +1,6 @@
 package loadbalancer
 
-import ("lb/backend"
+import ("Concurrent-Load-Balancing-Reverse-Proxy-with-Health-Monitoring/backend"
 		"net/url"
 )
 

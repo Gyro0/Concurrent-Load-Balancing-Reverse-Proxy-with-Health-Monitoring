@@ -150,3 +150,25 @@ func (sp *ServerPool) SetBackendStatus(link *url.URL, alive bool){
 		}
 	}
 }
+
+
+func (sp *ServerPool) GetAllBackends() []*backend.Backend{
+	sp.Mux.RLock()
+	backends:=make([]*backend.Backend,len(sp.Backends))
+	copy(backends,sp.Backends)
+	sp.Mux.RUnlock()
+	return backends
+}
+
+func (sp *ServerPool) RemoveBackend(u *url.URL) bool{
+	sp.Mux.Lock()
+	defer sp.Mux.Unlock()
+	for i,b :=range sp.Backends{
+		if b.URL.String()==u.String(){
+			sp.Backends=append(sp.Backends[:i],sp.Backends[i+1:]...)
+			log.Printf("Removed backend: %s",u)
+			return true
+		}
+	}
+	return false
+}

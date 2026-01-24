@@ -9,4 +9,5 @@ type LoadBalancer interface {
 	GetNextValidPeer() *backend.Backend
 	AddBackend(backend *backend.Backend)
 	SetBackendStatus(uri *url.URL, alive bool)
+	RemoveBackend(uri *url.URL) bool
 }

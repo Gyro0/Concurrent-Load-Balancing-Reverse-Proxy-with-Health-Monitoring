@@ -10,6 +10,7 @@ type Config struct {
     Strategy              string   `json:"Strategy"`
     Backends              []string `json:"backends"`
 	HealthCheckFreq 	  string   `json:"health_check_frequency"`
+	AdminPort			  int       `json:"admin_port"`
 }
 
 func LoadConfig() Config {

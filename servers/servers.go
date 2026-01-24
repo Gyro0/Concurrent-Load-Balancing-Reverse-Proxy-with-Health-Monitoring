@@ -4,6 +4,7 @@ import (
 	"Concurrent-Load-Balancing-Reverse-Proxy-with-Health-Monitoring/backend"
 	"fmt"
 	"log"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"sync"
@@ -11,8 +12,9 @@ import (
 	"time"
 )
 
-
-
+//a server pool manages a collection of backend server and implements loadbalancing algorithms
+//it maintains the list of backends and their health status and provides thread safe access
+//it implements the LoadBalancer interface to allow different selection strategies
 type ServerPool struct {
 	Backends []*backend.Backend `json:"backends"`
 	Current uint64 `json:"current"` // Used for Round-Robin
@@ -20,6 +22,8 @@ type ServerPool struct {
 	strategy string
 }
 
+//constructor that initializes a new empty server pool with the specified load balancing strategy
+//the strategy is what determines which algorithm we are gonna use to select backends (round-roubin or least-connections)
 func NewServerPool(strategy string) *ServerPool {
 	return &ServerPool{
 		Backends:make([]*backend.Backend,0),
@@ -27,6 +31,9 @@ func NewServerPool(strategy string) *ServerPool {
 	}
 }
 
+
+//this func parses a list of URL strings and adds them as backends to the pool 
+//its used to add servers to the pool from the list declared in the json config file
 func (sp *ServerPool) LoadBackends(urls []string)error{
 	for _,backendURL :=range urls {
 		parsedURL,err:=url.Parse(backendURL)
@@ -34,6 +41,9 @@ func (sp *ServerPool) LoadBackends(urls []string)error{
 			log.Fatalf("failed to parse url %s : %v ",backendURL,err)
 			return err
 		}
+
+		//new backend struct with the parsed URL
+		//initially mark as alive, healthchecker will verify 
 		b:=&backend.Backend{
 			URL:parsedURL,
 			Alive:true,
@@ -44,6 +54,9 @@ func (sp *ServerPool) LoadBackends(urls []string)error{
 	return nil
 }
 
+//this func adds a new backend server to the pool after checking for duplcates
+//it also acquires write lock to safely modfy the backend list
+//returns an error if a backend with the same url already exists in the pool
 func (sp *ServerPool) AddBackend(b *backend.Backend) error {
     sp.Mux.Lock()
     defer sp.Mux.Unlock()
@@ -58,8 +71,8 @@ func (sp *ServerPool) AddBackend(b *backend.Backend) error {
     return nil
 }
 
-//servers control
-
+//this is a utility function to start test backend servers locally
+//its optional and used for testing, you can run independent server using server.go
 func RunServers(sp *ServerPool){
 	var wg sync.WaitGroup
 	defer wg.Wait()
@@ -70,6 +83,9 @@ func RunServers(sp *ServerPool){
 		go makeServers(sp, &wg,x)
 	}
 }
+
+//this is also a utility function that creates and runs a simple HTTP server for testing
+//it responds to all requests after a brief delay to simulate work
 func makeServers(sp *ServerPool, wg *sync.WaitGroup,idx int){
 	defer wg.Done()
 
@@ -95,45 +111,75 @@ func makeServers(sp *ServerPool, wg *sync.WaitGroup,idx int){
 }
 
 
+//this func implements round-robin backend selection
+//it cycles through backend in order while skipping unhealthy ones 
+//it uses atomic operation on the counter to ensure thread safety
 func (sp *ServerPool) getNextValidPeerRR() *backend.Backend{
 	sp.Mux.RLock()
 	defer sp.Mux.RUnlock()
+	//number of backends in the pool
 	len:=len(sp.Backends)
 	if len==0{
 		return nil
 	}
+	//atomically increment and get the current position using modulo
 	start:=(atomic.AddUint64(&sp.Current,1)-1)% uint64(len)
+	//try each backend in order starting from the current position
 	for i:=0;i<len;i++{
 		idx:=(start+uint64(i))%uint64(len)
 		b:=sp.Backends[idx]
+		//once we find a healthy backend we return it
 		if b.IsAlive(){
 			return b
 		}
 	}
+	//if no backends found
 	return nil
 }
 
+
+//this func implements least-connections backend selection
+//it finds the healthy backend with fewer active connections
+//and chooses randomly if there exist multiple min connections backends
 func (sp *ServerPool) getNextValidPeerLC() *backend.Backend{
 	sp.Mux.RLock()
 	defer sp.Mux.RUnlock()
 	if len(sp.Backends)==0{
 		return nil
 	}
-	var leastConnsBackend *backend.Backend
+    var candidates []*backend.Backend
 	minConns :=int64(-1)
+	//find all backends with minimum connection count
 	for _,b:=range sp.Backends{
 		if !b.IsAlive(){
 			continue
 		}
 		conns:=b.GetConns()
-		if minConns==-1 || conns<minConns{
-			minConns=conns
-			leastConnsBackend=b
-		}
+		if minConns==-1 || conns<minConns {
+			//found a new minimum we start a new list
+            minConns=conns
+            candidates=[]*backend.Backend{b}
+        } else if conns==minConns {
+            //same min we add to the list
+            candidates = append(candidates, b)
+        }
 	}
-	return leastConnsBackend
+	if len(candidates)==0{
+        return nil
+    }
+    //if multiple backneds exists, choose randomly
+    if len(candidates)>1{
+        idx:=rand.Intn(len(candidates))
+        return candidates[idx]
+    }
+	//return the only one
+    return candidates[0]
 }
 
+
+//this func selects the next backend using the configured strategy, it routes to either
+//round-robin or least-connections based on the serverpool's configuration
+//defaults to round robin if an unknown strategy is choosen
 func (sp *ServerPool) GetNextValidPeer() *backend.Backend{
 	switch sp.strategy{
 		case "round-robin","rr","Round-Robin","Round-robin","RR":
@@ -141,17 +187,23 @@ func (sp *ServerPool) GetNextValidPeer() *backend.Backend{
 		case "least-connections","lc","Least-Connections","Least-connections","LC":
 			return sp.getNextValidPeerLC()
 		default:
-			log.Printf("unknown strategy '%s', default is rr",sp.strategy)
+			log.Printf("[WARN] Unknown strategy '%s', default is Round-Robin",sp.strategy)
 			return sp.getNextValidPeerRR()
 	}
 }
 
+
+//this func updates the status of a backend 
+//its used by the healthchecker
 func (sp *ServerPool) SetBackendStatus(link *url.URL, alive bool){
+	//gets a copy of all backends
 	backends:=sp.GetAllBackends()
+	//finds the matching backend
 	for _,b :=range backends{
 		if b.URL.String()==link.String(){
 			wasAlive:=b.IsAlive()
             b.SetAlive(alive)
+			//log only if the status actually changed
             if wasAlive!=alive {
                 if alive{
                     log.Printf("[STATUS] Backend %s marked as UP",link)
@@ -162,11 +214,13 @@ func (sp *ServerPool) SetBackendStatus(link *url.URL, alive bool){
             return
 		}
 	}
+	//if we get here no matching server was found in the pool
 	log.Printf("[WARN] Attempted to set status for unknown backend: %s", link)
 
 }
 
-
+//this func returns a copy of all backends in the pool
+//it creates a new list and copies the backend pointers to avoid holding the lock
 func (sp *ServerPool) GetAllBackends() []*backend.Backend{
 	sp.Mux.RLock()
 	backends:=make([]*backend.Backend,len(sp.Backends))
@@ -175,11 +229,17 @@ func (sp *ServerPool) GetAllBackends() []*backend.Backend{
 	return backends
 }
 
+//this func removes a backend from the pool
+//it acquires write lock to safely modify the backend list
+//returns true if the backend was found and removed and false otherwise
 func (sp *ServerPool) RemoveBackend(u *url.URL) bool{
 	sp.Mux.Lock()
 	defer sp.Mux.Unlock()
+	
+	//search for the backend with matching URL
 	for i,b :=range sp.Backends{
 		if b.URL.String()==u.String(){
+			//this creates a new slice without the removed backend
 			sp.Backends=append(sp.Backends[:i],sp.Backends[i+1:]...)
 			return true
 		}

@@ -7,20 +7,22 @@ import (
 
 type Config struct {
     Port                  int      `json:"port"`
-    Strategy              string   `json:"Strategy"`
+    Strategy              string   `json:"strategy"`
     Backends              []string `json:"backends"`
 	HealthCheckFreq 	  string   `json:"health_check_frequency"`
 	AdminPort			  int       `json:"admin_port"`
 }
 
-func LoadConfig() Config {
-	file,err :=os.ReadFile("config.json")
+func LoadConfigFromFile(filename string) Config {
+	file,err :=os.Open(filename)
 	if err!=nil{
-		log.Fatalf("failed to read : %v",err)
+		log.Fatalf("failed to open config file %s: %v",filename,err)
 	}
+	defer file.Close()
 	var config Config
-    if err := json.Unmarshal(file, &config); err != nil {
-        log.Fatalf("failed to parse config file: %v", err)
+	
+    if err:=json.NewDecoder(file).Decode(&config); err!=nil{
+        log.Fatalf("failed to decode config file %s: %v",filename,err)
     }
 	return config
 }

@@ -6,49 +6,69 @@ import (
 	"Concurrent-Load-Balancing-Reverse-Proxy-with-Health-Monitoring/healthcheck"
 	"Concurrent-Load-Balancing-Reverse-Proxy-with-Health-Monitoring/proxy"
 	"Concurrent-Load-Balancing-Reverse-Proxy-with-Health-Monitoring/servers"
+	"context"
+	"flag"
 	"fmt"
 	"log"
 	"net/http"
-	"net/url"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 )
 
 func main() {
+    configFile:=flag.String("config", "config.json", "Path to configuration file")
+    flag.Parse()
+
+    ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+    defer stop()
+
+
     //load configuration
-    cfg:=config.LoadConfig()
-    log.Printf("Starting Load Balancer on port %d with strategy: %s",cfg.Port,cfg.Strategy)
+    cfg:=config.LoadConfigFromFile(*configFile)
+    log.Printf("[INIT] Starting Load Balancer on port %d with strategy: %s",cfg.Port,cfg.Strategy)
 
     //create server pool and load backends
-    serverPool:=servers.NewServerPool()
-    serverPool.LoadBackends()
+    serverPool:=servers.NewServerPool(cfg.Strategy)
 
+    if err:=serverPool.LoadBackends(cfg.Backends); err!=nil {
+        log.Fatalf("[WARN] Failed to load backends: %v",err)
+    }
     //start backend servers in background
-    go servers.RunServers(serverPool)
-    log.Println("Backend servers starting...")
+    //go servers.RunServers(serverPool)
+    //log.Println("[INIT] Backend servers starting...")
 
     //start health checker routine
     healthcheck,err:=healthcheck.NewHealthChecker(serverPool,cfg.HealthCheckFreq)
     if err!=nil{
-        log.Fatalf("Failed to start health checker: %v",err)
+        log.Fatalf("[WARN] Failed to start health checker: %v",err)
     }    
-    log.Println("Health Checker service starting...")
+    log.Println("[INIT] Health Checker service starting...")
 
-    healthcheck.Start()
+    healthcheck.Start(ctx)
 
     //create proxy handler
     proxyHandler:=proxy.NewProxyHandler(serverPool)
-
+    
     //start load balancer
-    address:=fmt.Sprintf(":%d",cfg.Port)
+    proxyServer := &http.Server{
+        Addr:fmt.Sprintf(":%d",cfg.Port),
+        Handler:proxyHandler,
+        ReadTimeout:10*time.Second,
+        WriteTimeout:10*time.Second,
+        IdleTimeout:120*time.Second,
+        ReadHeaderTimeout:5*time.Second,
+    }
+
+    
     go func() {
-        log.Println("Starting LoadBalancer")
-        err:=http.ListenAndServe(address, proxyHandler)
-        if err!=nil{
-            log.Fatalf("Failed to start load balancer: %v",err)
+        log.Printf("[INIT] Load Balancer listening on %s",proxyServer.Addr)
+        err:=proxyServer.ListenAndServe()
+        if err!=nil&& err!=http.ErrServerClosed{
+            log.Fatalf("[WARN] Failed to start load balancer: %v",err)
         }
-        log.Printf("Load Balancer listening on %s", address)
-        log.Println("Ready to accept requests!")
-    }()
+        }()
     
     //start admin server
     adminAPI:=admin.NewAdminAPI(serverPool)
@@ -72,22 +92,34 @@ func main() {
     }
 
     go func(){
-        log.Println("Starting Admin Server")
+        log.Printf("[INIT] Admin listening on %s",adminServer.Addr)
         err:=adminServer.ListenAndServe()
-        if err!=nil{
-            log.Fatalf("Failed to start admin server: %v", err)
+        if err!=nil&& err!=http.ErrServerClosed{
+            log.Fatalf("[WARN] Failed to start admin server: %v", err)
         }
-        log.Printf("Admin listening on %s", adminServer.Addr)
-        log.Println("Ready to accept requests!")
     }()
+    
+    log.Println("[INIT] All services started successfully!")
 
-    //test healthchecker working
-    time.Sleep(5*time.Second)
-    backendURL,_:=url.Parse("http://localhost:8084")
-    serverPool.SetBackendStatus(backendURL,false)
-    //health checker will set the backend status to true again(since it is up)
-    time.Sleep(5*time.Second)
-    backendURL2,_:=url.Parse("http://localhost:8083")
-    serverPool.SetBackendStatus(backendURL2,false)
-    select {}
+    //wait for interrupt signal
+    <-ctx.Done()
+    log.Println("[SHUTDOWN] Shutdown signal received, gracefully shutting down...")
+
+    shutdownCtx,cancel:=context.WithTimeout(context.Background(),10*time.Second)
+    defer cancel()
+    healthcheck.Stop()
+
+    //shutdown servers
+    if err:=proxyServer.Shutdown(shutdownCtx);err!=nil{
+        log.Printf("[WARN] Proxy server shutdown error: %v",err)
+    }else{
+        log.Printf("[SHUTDOWN] Proxy server shutting down...")
+
+    }
+    if err:=adminServer.Shutdown(shutdownCtx); err!=nil{
+        log.Printf("[WARN] Admin server shutdown error: %v",err)
+    }else{
+        log.Printf("[SHUTDOWN] Admin server shutting down...")
+    }
+    log.Println("[SHUTDOWN] Servers gracefully stopped")
 }

@@ -1,10 +1,10 @@
 {   "port":8080,
-    "Strategy":"lc",
-    "health_check_frequency": "5s",
+    "strategy":"lc",
+    "health_check_frequency": "15s",
     "backends": [
     "http://localhost:8082",
     "http://localhost:8083",
-    "http://localhost:8084",
-    "http://localhost:8085"],
+    "http://localhost:8084"
+    ],
     "admin_port":8081
 }

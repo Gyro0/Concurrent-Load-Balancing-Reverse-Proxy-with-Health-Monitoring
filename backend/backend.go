@@ -14,16 +14,16 @@ type Backend struct {
 }
 
 
-func (b *Backend) SetAlive(alive bool) (*Backend){
+func (b *Backend) SetAlive(alive bool){
 	b.mux.Lock()
-	defer b.mux.Unlock()
 	b.Alive=alive
-	return b
+	b.mux.Unlock()
 }
 func (b *Backend) IsAlive() bool{
 	b.mux.Lock()
-	defer b.mux.Unlock()
-	return b.Alive
+	alive:=b.Alive
+	b.mux.Unlock()
+	return alive
 }
 
 func (b *Backend) IncConns(){

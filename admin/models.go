@@ -5,19 +5,19 @@ import (
 )
 
 type AddBackendRequest struct {
-	URL string
+	URL string `json:"url"`
 }
 
 type BackendInfo struct {
-	URL          string
-	Alive        bool
-	CurrentConns int64
+	URL          string `json:"url"`
+	Alive        bool `json:"alive"`
+	CurrentConns int64 `json:"current_connections"`
 }
 
 type StatusResponse struct {
-	TotalBackends  int
-	ActiveBackends int
-	Backends       []BackendInfo
+	TotalBackends  int `json:"total_backends"`
+	ActiveBackends int `json:"active_backends"`
+	Backends       []BackendInfo `json:"backends"`
 }
 
 type AdminAPI struct {

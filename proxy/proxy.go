@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"Concurrent-Load-Balancing-Reverse-Proxy-with-Health-Monitoring/loadbalancer"
+	"context"
 	"log"
 	"net"
 	"net/http"
@@ -38,10 +39,15 @@ func NewProxyHandler(sp loadbalancer.LoadBalancer) *ProxyHandler{
 //ServeHTTP handles incoming HTTP requests by forwarding them to a selected backend
 //this method is called for every request that comes into the load balancer
 func (p *ProxyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request){
+	//getting the request context
+	ctx, cancel :=context.WithTimeout(req.Context(),15*time.Second)
+	defer cancel()
+	req=req.WithContext(ctx)
 	//selecting a healthy backend
 	backend:=p.serverPool.GetNextValidPeer()
 	if backend==nil{
 		//no healthy backends available -> return 503 service unavailable
+		log.Printf("[PROXY] No healthy backends available for request: %s %s",req.Method, req.URL.Path)
 		http.Error(w,"No available servers",http.StatusServiceUnavailable)
 		return
 	}
@@ -56,7 +62,22 @@ func (p *ProxyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request){
 	proxy.Transport=p.transport
 	//define a custom error handler for failures
 	proxy.ErrorHandler=func(w http.ResponseWriter,req *http.Request,err error){
-		log.Printf("Backend %s failed: %v",backend.URL,err)
+		//if error is due to client disconnect (context cancellation)
+		if ctx.Err()== context.Canceled {
+            log.Printf("[PROXY] Client disconnected for request to %s: %s %s",backend.URL, req.Method,req.URL.Path)
+            //we do not mark backend as down for client disconnects
+            return
+        }
+		//if error is due to context deadline exceeded (timeout)
+        if ctx.Err()== context.DeadlineExceeded {
+            log.Printf("[PROXY] Request timeout for backend %s: %v",backend.URL, err)
+            //mark backend as down
+            p.serverPool.SetBackendStatus(backend.URL, false)
+            http.Error(w,"Gateway timeout",http.StatusGatewayTimeout)
+            return
+        }
+		//for other errors we set backend as down
+		log.Printf("[PROXY] Backend %s failed: %v",backend.URL,err)
 		//mark the backend as down so it wont receive more requests
         p.serverPool.SetBackendStatus(backend.URL, false)
 		//return 502 bad gateway to the client indicating backend failure

@@ -24,9 +24,9 @@ func (b *Backend) SetAlive(alive bool){
 
 //returns the current status of the server
 func (b *Backend) IsAlive() bool{
-	b.mux.Lock()
+	b.mux.RLock()
 	alive:=b.Alive
-	b.mux.Unlock()
+	b.mux.RUnlock()
 	return alive
 }
 

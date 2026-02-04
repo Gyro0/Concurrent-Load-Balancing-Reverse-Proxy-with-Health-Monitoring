@@ -22,6 +22,7 @@ A production-ready reverse proxy and load balancer written in Go that intelligen
   - Connection timeouts (dial, response header, read/write)
   - Automatic backend failover
   - Graceful shutdown with request draining
+  - Context propagation to cancel backend requests when the client disconnects
 - **Admin API**
   - `GET /status` - View all backends (health + connection count)
   - `POST /backends` - Add new backend
